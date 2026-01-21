@@ -1,0 +1,9 @@
+{
+	"description": "Просто префиксные суммы на Dlang",
+	"license": "MIT",
+	"authors": [
+		"arducat"
+	],
+	"copyright": "(D) ArduCat, 2025",
+	"name": "testprefsumm"
+}

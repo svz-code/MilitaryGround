@@ -1,0 +1,17 @@
+.dub
+docs.json
+__dummy.html
+docs/
+/testprefsumm
+testprefsumm.so
+testprefsumm.dylib
+testprefsumm.dll
+libtestprefsumm.a
+testprefsumm.a
+testprefsumm.lib
+testprefsumm-test-*
+*.exe
+*.pdb
+*.o
+*.obj
+*.lst
