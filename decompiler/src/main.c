@@ -8,8 +8,6 @@
 #include <libelf.h>
 #include <gelf.h>
 
-#include "vec.h"
-
 int main(int argc, char** argv) {
     printf("От создателей $sudo-bot, TestPrefSumm, Vodka, и udpping/tcpping...\nВстречайте: КАРТОН тхе ДЕКОМПИЛЕР 🔥🔥🔥\n");
     
@@ -51,6 +49,9 @@ int main(int argc, char** argv) {
         return 1;
     }
     
+    ZyanU32 mode = (ehdr.e_machine == EM_X86_64) ? ZYDIS_MACHINE_MODE_LONG_64 : ZYDIS_MACHINE_MODE_LEGACY_32;
+    ZyanU32 width = (ehdr.e_machine == EM_X86_64) ? ZYDIS_STACK_WIDTH_64 : ZYDIS_STACK_WIDTH_32;
+    
     if (ehdr.e_type != ET_EXEC) {
         printf("Да иди ты нафиг, это не executable file! Сворачиваемся.\n");
         return 1;
@@ -62,55 +63,67 @@ int main(int argc, char** argv) {
     ZyanUSize phnum;
     elf_getphdrnum(e, &phnum);
     GElf_Phdr phdr;
-    ZyanUSize file_offset = -1; // я отлично осведомлен о том, что unsigned пошлет меня куда подальше с этим -1
+    
+    int64_t rax = 0;
     
     for (ZyanUSize i = 0; i < phnum; i++) {
         gelf_getphdr(e, i, &phdr);
-        if (phdr.p_type == PT_LOAD && entry_point >= phdr.p_vaddr && entry_point < (phdr.p_vaddr + phdr.p_memsz)) {
-            file_offset = phdr.p_offset + (entry_point - phdr.p_vaddr);
-            break;
+        
+        if (phdr.p_type == PT_LOAD && (phdr.p_flags & PF_X)) {
+            printf("Уххх экзекьютабле секция номер %zu с размером %lu \n", i, phdr.p_memsz);
+            
+            ZyanU8 *data = malloc(phdr.p_filesz);
+            lseek(fd, phdr.p_offset, SEEK_SET);
+            read(fd, data, phdr.p_filesz);
+            
+            ZyanU64 entry_offset = entry_point - phdr.p_vaddr;
+            if (entry_offset < phdr.p_filesz) {
+                printf("Ухх энтри поинт с оффсетом %lu\n", entry_offset);
+                ZydisDecoder decoder;
+                ZydisDecoderInit(&decoder, mode, width);
+                
+                ZydisFormatter formatter;
+                ZydisFormatterInit(&formatter, ZYDIS_FORMATTER_STYLE_INTEL);
+                
+                ZyanUSize offset = entry_offset;
+                ZyanU64 runtime_address = entry_point;
+                
+                ZydisDecodedInstruction instruction;
+                ZydisDecodedOperand operands[ZYDIS_MAX_OPERAND_COUNT];
+                
+                while (offset < phdr.p_filesz && ZYAN_SUCCESS(ZydisDecoderDecodeFull(&decoder, data + offset, phdr.p_filesz - offset, &instruction, operands))) {
+                    printf("%016" PRIX64 "  ", runtime_address);
+                    
+                    char buffer[256];
+                    ZydisFormatterFormatInstruction(&formatter, &instruction, operands, instruction.operand_count_visible, buffer, sizeof(buffer), runtime_address, ZYAN_NULL);
+                    puts(buffer);
+                    
+                    if (instruction.mnemonic == ZYDIS_MNEMONIC_MOV) {
+                        if (operands[1].type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
+                            if (operands[0].reg.value == ZYDIS_REGISTER_RAX) {
+                                //TODO: научится определять, signed или unsigned
+                                rax = operands[1].imm.value.s;
+                                //printf("Ой, простите, вмешаюсь. RAX у нас: %ld\n", rax);
+                            }
+                        }
+                    }
+                    
+                    if (instruction.mnemonic == ZYDIS_MNEMONIC_SYSCALL) {
+                        if (rax == 60) {
+                            printf("Ну, где-то здесь программа должна закончится по идее.\n");
+                            break;
+                        }
+                    }
+                    
+                    offset += instruction.length;
+                    runtime_address += instruction.length;
+                }
+            }
+            
+            free(data);
         }
     }
     
-    if (file_offset == (ZyanUSize)-1) {
-        printf("Гг, тима раков, сворачиваемся.\n");
-        return 1;
-    }
-    
-    ZyanU8* data = vector_create();
-    vector_reserve(&data, 256);
-    lseek(fd, file_offset, SEEK_SET);
-    ZyanUSize bread = read(fd, data, 256);
-    
-    if (bread <= 0) {
-        printf("⚡️⚡️⚡️ Чтение - В С Е. Сворачиваемся.\n");
-        return 1;
-    }
-    
-    ZydisDecoder decoder;
-    ZydisDecoderInit(&decoder, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64);
-    
-    ZydisFormatter formatter;
-    ZydisFormatterInit(&formatter, ZYDIS_FORMATTER_STYLE_INTEL);
-    
-    ZyanU64 runtime_address = entry_point;
-    ZyanUSize offset = 0;
-    
-    ZydisDecodedInstruction instruction;
-    ZydisDecodedOperand operands[ZYDIS_MAX_OPERAND_COUNT];
-    while (ZYAN_SUCCESS(ZydisDecoderDecodeFull(&decoder, data + offset, bread - offset,
-        &instruction, operands))) {
-        printf("%016" PRIX64 "  ", runtime_address);
-        
-        char buffer[256];
-        ZydisFormatterFormatInstruction(&formatter, &instruction, operands, instruction.operand_count_visible, buffer, sizeof(buffer), runtime_address, ZYAN_NULL);
-        puts(buffer);
-        
-        offset += instruction.length;
-        runtime_address += instruction.length;
-    }
-    
-    vector_free(data);
     elf_end(e);
     close(fd);
     return 0;
